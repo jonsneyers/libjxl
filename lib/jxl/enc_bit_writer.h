@@ -99,13 +99,6 @@ struct BitWriter {
     Allotment* parent_;
   };
 
-  // WARNING: think twice before using this. Concatenating two BitWriters that
-  // pad to bytes is NOT the same as one contiguous BitWriter.
-  BitWriter& operator+=(const BitWriter& other);
-
-  // TODO(janwas): remove once all callers use BitWriter
-  BitWriter& operator+=(const PaddedBytes& other);
-
   // Writes bits into bytes in increasing addresses, and within a byte
   // least-significant-bit first.
   //
@@ -114,8 +107,7 @@ struct BitWriter {
 
   // This should only rarely be used - e.g. when the current location will be
   // referenced via byte offset (TOCs point to groups), or byte-aligned reading
-  // is required for speed. WARNING: this interacts badly with operator+=,
-  // see above.
+  // is required for speed.
   void ZeroPadToByte() {
     const size_t remainder_bits =
         RoundUpBitsToByteMultiple(bits_written_) - bits_written_;
