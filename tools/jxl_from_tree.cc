@@ -817,6 +817,19 @@ bool SetHFContexts(const HFContextSettings& hf,
   return true;
 }
 
+// After a failed frame encode: what failed, and what to check for the cases
+// where the library cannot say more.
+void ReportFrameFailure(size_t frame_index, const CompressParams& cparams) {
+  fprintf(stderr, "Failed to encode frame %zu\n", frame_index);
+  if (!cparams.squeeze_scripts.empty()) {
+    fprintf(stderr,
+            "(This frame has SqueezeCustom: check that every step's channels "
+            "exist at that point (colour channels, extra channels, palette "
+            "meta channels and the residual channels of earlier steps), and "
+            "that they are at least 1 pixel in the squeezed direction.)\n");
+  }
+}
+
 // The name of tree property `p`, as written in tree files.
 std::string PropertyName(int p) {
   static const char* kNames[16] = {
@@ -1848,6 +1861,51 @@ bool ParseNode(F& tok, Tree& tree, SplineData& spline_data,
     cparams.options.has_wp_params = params;
   } else if (t == "Squeeze") {
     cparams.responsive = true;
+  } else if (t == "SqueezeCustom") {
+    // SqueezeCustom N step...: one squeeze transform with N steps (0: the
+    // default script), after the ones before it; SqueezeCustom none: no more.
+    // A step is H or V (horizontal or vertical; uppercase: the residuals go
+    // right after the squeezed channels, lowercase: at the end), then the first
+    // channel, then optionally a comma and the number of channels (default 1).
+    t = tok();
+    size_t num = 0;
+    const size_t steps = t == "none" ? 0 : ParseUnsigned(t, &num);
+    if (t == "none") {
+      cparams.squeeze_scripts.clear();
+    } else if (num != t.size() || steps > 296) {
+      fprintf(stderr, "Invalid SqueezeCustom step count (0..296): %s\n",
+              t.c_str());
+      return false;
+    }
+    std::vector<jxl::SqueezeParams> script;
+    for (size_t i = 0; i < steps; i++) {
+      t = tok();
+      const char d = t.empty() ? 0 : t[0];
+      if (d != 'H' && d != 'V' && d != 'h' && d != 'v') {
+        fprintf(stderr,
+                "Invalid SqueezeCustom step %s: expected H, V, h or v, a "
+                "channel, and optionally a comma and a channel count\n",
+                t.c_str());
+        return false;
+      }
+      const size_t comma = t.find(',');
+      const std::string first = t.substr(1, comma - 1);
+      const std::string count =
+          comma == std::string::npos ? "1" : t.substr(comma + 1);
+      size_t n1 = 0, n2 = 0;
+      jxl::SqueezeParams sp;
+      sp.horizontal = d == 'H' || d == 'h';
+      sp.in_place = d == 'H' || d == 'V';
+      sp.begin_c = ParseUnsigned(first, &n1);
+      sp.num_c = ParseUnsigned(count, &n2);
+      if (first.empty() || n1 != first.size() || n2 != count.size() ||
+          sp.num_c == 0) {
+        fprintf(stderr, "Invalid SqueezeCustom step: %s\n", t.c_str());
+        return false;
+      }
+      script.push_back(sp);
+    }
+    if (t != "none") cparams.squeeze_scripts.push_back(script);
   } else if (t == "GroupShift") {
     t = tok();
     size_t num = 0;
@@ -3070,11 +3128,12 @@ bool FrameNeedsBlending(const jxl::ImageBundle& ib,
         if (id < 0) continue;
         const bool group = id >= static_cast<int>(first_group) &&
                            id <= static_cast<int>(last_group);
-        const bool lf = cparams.responsive && id >= static_cast<int>(first_lf) &&
+        const bool squeezed =
+            cparams.responsive || !cparams.squeeze_scripts.empty();
+        const bool lf = squeezed && id >= static_cast<int>(first_lf) &&
                         id <= static_cast<int>(last_lf);
         const bool global_has_samples =
-            id == 0 && (!multi_group || frame.palette.enabled ||
-                        cparams.responsive);
+            id == 0 && (!multi_group || frame.palette.enabled || squeezed);
         if (!(group && multi_group) && !lf && !global_has_samples) {
           fprintf(stderr,
                   "Warning: Residuals for stream %d, which codes no samples in "
@@ -3150,7 +3209,8 @@ bool FrameNeedsBlending(const jxl::ImageBundle& ib,
     ec.present = have_extra_channels;
     ec.upsampling = cparams.resampling;
     ec.ec_upsampling = cparams.ec_resampling;
-    ec.responsive = cparams.responsive != 0;
+    ec.responsive =
+        cparams.responsive != 0 || !cparams.squeeze_scripts.empty();
     if (!BuildHFMetaLists(memory_manager, frame, tree, width, height, ec)) {
       return JXL_FAILURE("Invalid ACSTree or QFTree");
     }
@@ -3439,7 +3499,7 @@ bool FrameNeedsBlending(const jxl::ImageBundle& ib,
       BitWriter best(memory_manager);
       cparams.options.residual_inner_lz77 = false;
       if (!encode_frame(&best)) {
-        fprintf(stderr, "Failed to encode frame %zu\n", frame_index);
+        ReportFrameFailure(frame_index, cparams);
         return JXL_FAILURE("Failed to encode frame");
       }
       if (!cparams.flat_nibble_code) {
@@ -3448,7 +3508,7 @@ bool FrameNeedsBlending(const jxl::ImageBundle& ib,
           BitWriter with(memory_manager);
           cparams.options.residual_lz77_context_costs = context_costs;
           if (!encode_frame(&with)) {
-            fprintf(stderr, "Failed to encode frame %zu\n", frame_index);
+            ReportFrameFailure(frame_index, cparams);
             return JXL_FAILURE("Failed to encode frame");
           }
           if (with.BitsWritten() < best.BitsWritten()) best = std::move(with);
@@ -3462,7 +3522,7 @@ bool FrameNeedsBlending(const jxl::ImageBundle& ib,
       BitWriter coded(memory_manager);
       BitWriter inlined(memory_manager);
       if (!encode_frame(&coded)) {
-        fprintf(stderr, "Failed to encode frame %zu\n", frame_index);
+        ReportFrameFailure(frame_index, cparams);
         return JXL_FAILURE("Failed to encode frame");
       }
       const Tree coded_tree = cparams.custom_fixed_tree;
@@ -3471,7 +3531,7 @@ bool FrameNeedsBlending(const jxl::ImageBundle& ib,
       cparams.custom_palette.entries.clear();
       cparams.options.code_meta_channels = false;
       if (!encode_frame(&inlined)) {
-        fprintf(stderr, "Failed to encode frame %zu\n", frame_index);
+        ReportFrameFailure(frame_index, cparams);
         return JXL_FAILURE("Failed to encode frame");
       }
       const bool use_inlined = inlined.BitsWritten() <= coded.BitsWritten();
@@ -3482,7 +3542,7 @@ bool FrameNeedsBlending(const jxl::ImageBundle& ib,
       }
       JXL_RETURN_IF_ERROR(writer.AppendUnaligned(use_inlined ? inlined : coded));
     } else if (!encode_frame(&writer)) {
-      fprintf(stderr, "Failed to encode frame %zu\n", frame_index);
+      ReportFrameFailure(frame_index, cparams);
       return JXL_FAILURE("Failed to encode frame");
     }
     cparams.modular_channel_ranges_out = nullptr;

@@ -1038,6 +1038,19 @@ Status ModularFrameEncoder::ComputeEncodingData(
     max_bitdepth += 2;
   }
 
+  // Custom squeeze scripts: exactly the given steps, without the checks above.
+  if (!groupwise) {
+    for (const std::vector<SqueezeParams>& script : cparams_.squeeze_scripts) {
+      Transform t(TransformId::kSqueeze);
+      t.squeezes = script;
+      if (!do_transform(gi, t, weighted::Header(), pool,
+                        cparams_.options.zero_tokens)) {
+        return JXL_FAILURE("Invalid squeeze script");
+      }
+      max_bitdepth = std::min(max_bitdepth + 2, level_max_bitdepth);
+    }
+  }
+
   if (max_bitdepth + 1 > level_max_bitdepth) {
     // force no group RCTs if we don't have a spare bit
     cparams_.colorspace = 0;

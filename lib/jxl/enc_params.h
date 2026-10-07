@@ -26,6 +26,7 @@
 #include "lib/jxl/frame_header.h"
 #include "lib/jxl/modular/encoding/dec_ma.h"
 #include "lib/jxl/modular/options.h"
+#include "lib/jxl/modular/transform/squeeze_params.h"
 #include "lib/jxl/splines.h"
 
 namespace jxl {
@@ -212,6 +213,10 @@ struct CompressParams {
   // property 1; -1 for every stream not listed): a prefix, then a period that
   // repeats. Streams not covered keep all-zero residuals.
   std::map<int, ResidualPattern> custom_residuals;
+  // Modular frames (jxl_from_tree's SqueezeCustom): squeeze transforms with
+  // exactly these steps (an empty script is the default one), applied in this
+  // order after the default squeeze, if any.
+  std::vector<std::vector<SqueezeParams>> squeeze_scripts;
   // Modular frames (jxl_from_tree's NibbleCode): prefix codes, the default
   // hybrid uint config, and every histogram that uses more than two of the
   // tokens 0..15 (and no others) becomes the flat code of all 16 (4 bits
