@@ -2528,6 +2528,11 @@ bool ParseNode(F& tok, Tree& tree, SplineData& spline_data,
   } else if (t == "NoGaborish") {
     // Gaborish is on by default in VarDCT frames.
     cparams.gaborish = jxl::Override::kOff;
+  } else if (t == "NoDCSmoothing") {
+    // NoDCSmoothing: the frame flag that skips the adaptive smoothing of the
+    // LF in VarDCT frames, as JPEG transcoding sets it (decoders that smooth
+    // while reconstructing a JPEG, like libjxl 0.12, then write the LF as is).
+    cparams.skip_adaptive_dc_smoothing = true;
   } else if (t == "Palette" || t == "ImplicitPalette") {
     // Palette <num_c> <nb_deltas> <nb_colors> <predictor> followed by
     // (nb_deltas + nb_colors) x num_c values: an explicit palette on the

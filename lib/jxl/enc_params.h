@@ -67,6 +67,10 @@ struct CompressParams {
   Override dots = Override::kDefault;
   Override patches = Override::kDefault;
   Override gaborish = Override::kDefault;
+
+  // Sets the frame flag that skips the adaptive smoothing of the LF (VarDCT),
+  // as JPEG transcoding does.
+  bool skip_adaptive_dc_smoothing = false;
   int epf = -1;
 
   // Progressive mode.

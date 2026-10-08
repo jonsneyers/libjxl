@@ -307,6 +307,10 @@ uint64_t FrameFlagsFromParams(const CompressParams& cparams) {
     flags |= FrameHeader::kUseDcFrame;
   }
 
+  if (cparams.skip_adaptive_dc_smoothing) {
+    flags |= FrameHeader::kSkipAdaptiveDCSmoothing;
+  }
+
   return flags;
 }
 
